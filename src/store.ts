@@ -54,16 +54,37 @@ export const useLeague = () => {
   return state.league!;
 };
 
+// Every view change is a browser history entry, so the back button (and
+// back()) return to the previous page. `depth` counts in-app entries.
+let depth = 0;
+
 export function go(view: View) {
   state = { ...state, view };
+  depth++;
+  history.pushState({ view, depth }, '');
   emit();
   window.scrollTo(0, 0);
 }
 
 export function setLeague(league: League | null, view: View) {
   state = { ...state, league, view };
+  depth = 0;
+  history.replaceState({ view, depth }, '');
   emit();
 }
+
+export function back() {
+  if (depth > 0) history.back();
+  else go({ name: 'dashboard' });
+}
+
+window.addEventListener('popstate', (e) => {
+  const s = e.state as { view: View; depth: number } | null;
+  if (!s || !state.league) return;
+  depth = s.depth;
+  state = { ...state, view: s.view };
+  emit();
+});
 
 export async function openLeague(id: string) {
   const l = await loadLeague(id);

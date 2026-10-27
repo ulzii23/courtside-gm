@@ -181,12 +181,12 @@ export function MusicPlayer() {
             {thumb ? <img src={thumb} alt="" /> : <span>♪</span>}
           </button>
           <div className="music-info" onClick={() => setExpanded((x) => !x)}>
-            <div className="music-song">{!on ? 'Music off' : track?.song ?? (ready ? 'Tap anywhere to start the music' : 'Loading soundtrack…')}</div>
-            {on && track && <div className="music-artist">{track.artist}</div>}
+            <div className="music-song">{!on ? 'Music off' : track?.song ?? (ready ? 'Tap to start' : 'Loading…')}</div>
+            {expanded && on && track && <div className="music-artist">{track.artist}</div>}
           </div>
           <button className="icon-btn" title={playing ? 'Pause' : 'Play'} onClick={playPause} disabled={!ready}>{playing ? '⏸' : '▶'}</button>
           <button className="icon-btn" title="Next song" onClick={next} disabled={!ready}>⏭</button>
-          <button className="icon-btn" title={on ? 'Turn music off' : 'Turn music on'} onClick={toggleMusic}>{on ? '🎵' : '🔕'}</button>
+          {expanded && <button className="icon-btn" title={on ? 'Turn music off' : 'Turn music on'} onClick={toggleMusic}>{on ? '🎵' : '🔕'}</button>}
         </div>
         {expanded && (
           <div className="music-extra">

@@ -2,8 +2,9 @@ import { play } from '../sound';
 import { PERSONALITY_LABELS, RATING_LABELS, statFrom } from '../engine/ratings';
 import { seasonLabel } from '../data/teams';
 import { signPlayer, ROSTER_MAX, updateChemistry } from '../engine/league';
-import { changed, go, useLeague } from '../store';
+import { back, changed, go, useLeague } from '../store';
 import { PERSONALITY_KEYS, RATING_KEYS, type SeasonLine } from '../types';
+import { OffenseRole } from './OffenseRole';
 import { Bar, Card, f1, Headshot, moraleLabel, Ovr, pct, perGameRow, TeamLink } from './common';
 
 const RATING_GROUPS: [string, (typeof RATING_KEYS)[number][]][] = [
@@ -26,7 +27,7 @@ const PERSONALITY_HINTS: Record<string, string> = {
 export function PlayerPage({ id }: { id: string }) {
   const league = useLeague();
   const p = league.players[id];
-  if (!p) return <Card title="Player not found"><p>This player has retired.</p></Card>;
+  if (!p) return <Card title="Player not found"><p>This player has retired.</p><button className="btn" onClick={back}>← Back</button></Card>;
   const user = league.teams[league.userTeam];
   const isFA = league.freeAgents.includes(id);
   const [ml, mc] = moraleLabel(p.morale);
@@ -34,6 +35,7 @@ export function PlayerPage({ id }: { id: string }) {
 
   return (
     <div className="player-page">
+      <button className="btn ghost back-btn" onClick={back}>← Back</button>
       <div className="player-hero" style={{ background: team ? `linear-gradient(110deg, ${team.colors[0]}, ${team.colors[0]}aa 60%, ${team.colors[1]})` : undefined }}>
         <Headshot p={p} size={120} league={league} />
         <div className="player-hero-main">
@@ -81,6 +83,7 @@ export function PlayerPage({ id }: { id: string }) {
           {PERSONALITY_KEYS.map((k) => <Bar key={k} label={PERSONALITY_LABELS[k]} value={p.personality[k]} hint={PERSONALITY_HINTS[k]} />)}
           <p className="muted small">Expects about {Math.round(p.expMin)} minutes a night. {personalityBlurb(p.personality)}</p>
         </Card>
+        <OffenseRole p={p} editable={team?.abbr === league.userTeam} />
       </div>
 
       <Card title="Career">
@@ -100,7 +103,7 @@ export function PlayerPage({ id }: { id: string }) {
 
       {p.awards.length > 0 && (
         <Card title="Awards">
-          <div className="awards">{p.awards.map((a, i) => <span key={i} className="award">{a}</span>)}</div>
+          <div className="awards">{groupAwards(p.awards).map(([a, n]) => <span key={a} className="award">{a}{n > 1 && ` ×${n}`}</span>)}</div>
         </Card>
       )}
     </div>
@@ -136,6 +139,13 @@ function ratingHint(k: (typeof RATING_KEYS)[number], v: number) {
     case 'usg': return `≈ ${s.toFixed(1)}% usage rate`;
     case 'sta': return `≈ ${s.toFixed(0)} minutes before fatigue`;
   }
+}
+
+// "2016 Player of the Week" earned three times shows once as "×3".
+function groupAwards(awards: string[]): [string, number][] {
+  const counts = new Map<string, number>();
+  for (const a of awards) counts.set(a, (counts.get(a) ?? 0) + 1);
+  return [...counts];
 }
 
 function personalityBlurb(p: Record<string, number>) {

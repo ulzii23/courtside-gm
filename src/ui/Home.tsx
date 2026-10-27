@@ -68,7 +68,7 @@ export function Home() {
                 style={{ borderColor: team === t.abbr ? t.colors[1] : undefined, background: team === t.abbr ? t.colors[0] : undefined }}
                 onClick={() => setTeam(t.abbr)}
               >
-                <TeamLogo abbr={t.abbr} season={season} name={t.name} size={26} fallback={<span className="swatch" style={{ background: `linear-gradient(135deg, ${t.colors[0]} 50%, ${t.colors[1]} 50%)` }} />} />
+                <TeamLogo abbr={t.abbr} name={t.name} colors={t.colors} size={26} />
                 {t.name}
               </button>
             ))}

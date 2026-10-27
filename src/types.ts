@@ -29,6 +29,12 @@ export interface Tendencies {
   ftr: number; // FTA per FGA
 }
 
+// How a player plays on offense. Each key is a level from -2 (avoid) to +2 (all the time);
+// missing or 0 means his natural game. Several can be set at once and they blend.
+export const FOCUS_KEYS = ['three', 'mid', 'post', 'rim', 'shoot', 'pass', 'crash'] as const;
+export type FocusKey = (typeof FOCUS_KEYS)[number];
+export type Focus = Partial<Record<FocusKey, number>>;
+
 export interface SeasonLine {
   season: number;
   team: string;
@@ -48,6 +54,7 @@ export interface Player {
   pot: number;
   personality: Personality;
   tend: Tendencies;
+  focus?: Focus; // offensive role set by the GM
   realTeam: string | null; // team in real life that season
   expMin: number; // minutes the player expects (real role)
   morale: number; // 0-100
@@ -62,13 +69,15 @@ export interface Player {
   tradeRequest?: boolean;
 }
 
-export type OffenseSystem = 'balanced' | 'pace-space' | 'inside-out' | 'heliocentric' | 'motion' | 'run-gun';
+export type OffenseSystem =
+  | 'balanced' | 'pace-space' | 'inside-out' | 'heliocentric' | 'motion' | 'run-gun' | 'pick-roll' | 'post-up' | 'iso';
 export type DefenseSystem = 'man' | 'switch' | 'drop' | 'zone' | 'press';
 export type Pace = 'slow' | 'normal' | 'fast';
 
 export interface Strategy {
-  offense: OffenseSystem;
-  defense: DefenseSystem;
+  // A team can mix up to three systems; each possession uses one of them at random.
+  offense: OffenseSystem[];
+  defense: DefenseSystem[];
   pace: Pace;
   captain: string | null;
   closer: string | null; // go-to player in clutch time
@@ -165,6 +174,32 @@ export interface AwardEntry {
   userTeam: string; userRecord: string; userResult: string;
 }
 
+export interface PeriodLine {
+  g: number; w: number; pts: number; reb: number; ast: number; stl: number; blk: number; tov: number;
+  fgm: number; fga: number; ftm: number; fta: number; tpm: number;
+}
+
+export interface NewsItem {
+  day: number;
+  season: number;
+  text: string;
+  kind?: 'social' | 'award'; // plain news when missing
+  by?: string; // social handle
+  pid?: string; // player the item is about
+  team?: string;
+}
+
+export interface Honor {
+  season: number;
+  day: number;
+  kind: 'POW' | 'POM' | 'ROM'; // player of the week / month, rookie of the month
+  label: string; // "Week 3", "December"
+  conf: 'East' | 'West';
+  pid: string;
+  team: string;
+  line: string;
+}
+
 export interface League {
   version: number;
   id: string;
@@ -183,7 +218,10 @@ export interface League {
   playoffDay: number;
   champion: string | null;
   history: AwardEntry[];
-  news: { day: number; season: number; text: string }[];
+  news: NewsItem[];
+  honors?: Honor[];
+  // Stat totals since the last weekly / monthly award (regular season only).
+  period?: { week: Record<string, PeriodLine>; month: Record<string, PeriodLine> };
   rngSeed: number;
   nextGameId: number;
   pace: number; // league possessions per 48

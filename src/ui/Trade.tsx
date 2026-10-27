@@ -40,6 +40,14 @@ export function Trade({ initialTeam, initialGet }: { initialTeam?: string; initi
     setResult({ ok: verdict.ok, message: verdict.ok ? `${verdict.message} Check your rotation: new players start at 0 minutes.` : verdict.message });
   };
 
+  // Pick a player from anywhere in the league: switch to his team and put him in the deal.
+  const target = (id: string) => {
+    const abbr = league.players[id].stats.team;
+    setResult(null);
+    if (abbr !== partner) { setPartner(abbr); setGet([id]); }
+    else if (!get.includes(id)) setGet([...get, id]);
+  };
+
   const blockList = Object.values(league.players).filter((p) => p.tradeRequest && p.stats.team !== 'FA');
 
   return (
@@ -48,6 +56,8 @@ export function Trade({ initialTeam, initialGet }: { initialTeam?: string; initi
         <h2>Trades</h2>
         <span className={tw.open ? 'muted' : 'warn-text'}>{tw.why}</span>
       </div>
+
+      <PlayerSearch league={league} selected={getIds} onPick={target} />
 
       <div className="trade-grid">
         <RosterPicker league={league} team={user} selected={giveIds} onToggle={(id) => toggle(give, setGive, id)} title="You send" />
@@ -114,6 +124,68 @@ export function Trade({ initialTeam, initialGet }: { initialTeam?: string; initi
         </Card>
       </div>
     </div>
+  );
+}
+
+const POSITIONS = ['All', 'PG', 'SG', 'SF', 'PF', 'C'];
+// Accent-insensitive name matching (Dončić, Porziņģis, ...).
+const fold = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+function PlayerSearch({ league, selected, onPick }: { league: League; selected: string[]; onPick: (id: string) => void }) {
+  const [q, setQ] = useState('');
+  const [pos, setPos] = useState('All');
+  const [sortBy, setSortBy] = useState<'ovr' | 'pot' | 'value'>('ovr');
+  // The league is mutated in place, so rebuild each render (cheap) rather than memoize.
+  const pool = Object.values(league.teams).filter((t) => t.abbr !== league.userTeam).flatMap((t) => t.roster.map((id) => league.players[id]));
+  const needle = fold(q.trim());
+  const active = needle.length > 0 || pos !== 'All';
+  const key = (p: (typeof pool)[number]) => (sortBy === 'ovr' ? ovr(p.ratings) : sortBy === 'pot' ? p.pot : playerValue(p));
+  const results = active
+    ? pool
+      .filter((p) => (pos === 'All' || p.pos === pos) && (!needle || fold(p.name).includes(needle)))
+      .sort((a, b) => key(b) - key(a))
+      .slice(0, 25)
+    : [];
+
+  return (
+    <Card title="Find a player" right={
+      <div className="trade-search-controls">
+        <input placeholder="Search by name…" value={q} onChange={(e) => setQ(e.target.value)} />
+        <select value={pos} onChange={(e) => setPos(e.target.value)}>{POSITIONS.map((p) => <option key={p}>{p}</option>)}</select>
+        <select value={sortBy} onChange={(e) => setSortBy(e.target.value as typeof sortBy)}>
+          <option value="ovr">Best OVR</option><option value="pot">Best POT</option><option value="value">Trade value</option>
+        </select>
+      </div>
+    }>
+      {!active && <p className="muted small">Search every other team's roster by name or position. Click a player to add him to the deal; the trade partner switches to his team.</p>}
+      {active && !results.length && <p className="muted">No players match.</p>}
+      {results.length > 0 && (
+        <div className="table-wrap trade-search-results">
+          <table className="tbl">
+            <thead><tr><th></th><th>Player</th><th>Team</th><th>Pos</th><th>Age</th><th>OVR</th><th>POT</th><th title="Trade value">Value</th><th></th></tr></thead>
+            <tbody>
+              {results.map((p) => {
+                const on = selected.includes(p.id);
+                return (
+                  <tr key={p.id} className={on ? 'selected-row' : ''} onClick={() => onPick(p.id)} style={{ cursor: 'pointer' }}>
+                    <td><Headshot p={p} size={28} league={league} /></td>
+                    <td>
+                      <span onClick={(e) => e.stopPropagation()}><PlayerLink league={league} id={p.id} /></span>
+                      {p.tradeRequest && <span className="tag warn" title="Requested a trade">TR</span>}
+                      {p.injury && <span className="inj-text"> {p.injury.games}g</span>}
+                    </td>
+                    <td><TeamBadge league={league} abbr={p.stats.team} size={16} /> {p.stats.team}</td>
+                    <td>{p.pos}</td><td>{p.age}</td><td><Ovr p={p} /></td><td>{p.pot}</td>
+                    <td>{Math.round(playerValue(p))}</td>
+                    <td>{on ? <span className="muted small">In deal</span> : <button className="btn small">Add</button>}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
   );
 }
 

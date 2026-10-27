@@ -1,10 +1,11 @@
 import type {
-  BoxLine, GameResult, League, Player, RawPlayer, ScheduledGame, SeasonLine, Series, Team,
+  BoxLine, GameResult, League, NewsItem, Player, RawPlayer, ScheduledGame, SeasonLine, Series, Team,
 } from '../types';
 import { paceFor, teamsForSeason } from '../data/teams';
 import { emptyLine, generateRookie, ovr, playerFromRaw, progress, statFrom } from './ratings';
 import { makeSchedule } from './schedule';
 import { aiDailyMoves } from './transactions';
+import { bigGameBuzz, endOfDay, recordPeriodLine, tradeRequestBuzz } from './buzz';
 import { simulateGame } from './sim';
 import { chance, getSeed, random, seed, shuffle } from './random';
 
@@ -26,7 +27,7 @@ export function createLeague(season: number, raws: RawPlayer[], userTeam: string
   for (const info of teamsForSeason(season)) {
     teams[info.abbr] = {
       ...info, roster: [], minutes: {},
-      strategy: { offense: 'balanced', defense: 'man', pace: 'normal', captain: null, closer: null },
+      strategy: { offense: ['balanced'], defense: ['man'], pace: 'normal', captain: null, closer: null },
       autoLineup: info.abbr !== userTeam,
       w: 0, l: 0, homeW: 0, homeL: 0, pf: 0, pa: 0, streak: 0, chem: 65,
     };
@@ -256,26 +257,31 @@ export function autoRotation(league: League, team: Team, setStrategy: boolean) {
 }
 
 function suggestOffense(top: Player[]): Team['strategy']['offense'] {
-  if (!top.length) return 'balanced';
+  const out: Team['strategy']['offense'] = [];
+  const add = (o: Team['strategy']['offense'][number]) => { if (out.length < 2 && !out.includes(o)) out.push(o); };
+  if (!top.length) return ['balanced'];
   const avg = (f: (p: Player) => number) => top.reduce((s, p) => s + f(p), 0) / top.length;
   const tp = avg((p) => p.ratings.tp);
   const ins = avg((p) => p.ratings.ins);
   const pas = avg((p) => p.ratings.pas);
   const star = Math.max(...top.map((p) => p.ratings.usg));
-  if (star >= 88 && top.filter((p) => p.ratings.usg >= 80).length === 1) return 'heliocentric';
-  if (tp >= 60) return 'pace-space';
-  if (ins >= 62) return 'inside-out';
-  if (pas >= 50) return 'motion';
-  return 'balanced';
+  const bigPost = top.filter((p) => (p.pos === 'C' || p.pos === 'PF') && p.ratings.ins >= 70 && p.ratings.usg >= 60).length;
+  if (star >= 88 && top.filter((p) => p.ratings.usg >= 80).length === 1) add('heliocentric');
+  if (tp >= 60) add('pace-space');
+  if (bigPost >= 1 && ins >= 58) add('post-up');
+  if (ins >= 62) add('inside-out');
+  if (pas >= 50) add('motion');
+  if (star >= 80 && pas >= 42) add('pick-roll');
+  return out.length ? out : ['balanced'];
 }
 
 function suggestDefense(top: Player[]): Team['strategy']['defense'] {
-  if (!top.length) return 'man';
+  if (!top.length) return ['man'];
   const bestBlk = Math.max(...top.map((p) => p.ratings.blk));
   const avgDef = top.reduce((s, p) => s + p.ratings.def, 0) / top.length;
-  if (bestBlk >= 85) return 'drop';
-  if (avgDef >= 55) return 'switch';
-  return 'man';
+  if (bestBlk >= 85) return avgDef >= 55 ? ['drop', 'switch'] : ['drop', 'man'];
+  if (avgDef >= 55) return ['switch', 'man'];
+  return ['man'];
 }
 
 export function normalizeMinutes(team: Team) {
@@ -367,6 +373,9 @@ function updateMorale(league: League, team: Team, lines: BoxLine[], won: boolean
     let d = 0;
     if (expected > 8) d += Math.max(-3, Math.min(1.5, ((min - expected) / expected) * 2.5)) * egoW;
     d += won ? 0.5 : -0.5 * (1 - p.personality.team / 200);
+    // Big egos resent being told to shoot less or give the ball up.
+    const muzzled = Math.max(0, -(p.focus?.shoot ?? 0)) + Math.max(0, p.focus?.pass ?? 0) * 0.5;
+    if (muzzled && p.personality.ego > 55) d -= muzzled * ((p.personality.ego - 55) / 45) * 0.35;
     if (team.streak <= -5) d -= 0.6;
     if (team.streak >= 5) d += 0.4;
     d += leadBoost * 0.6;
@@ -386,7 +395,8 @@ function updateMorale(league: League, team: Team, lines: BoxLine[], won: boolean
 function checkTradeRequest(league: League, team: Team, p: Player) {
   if (!p.tradeRequest && p.expMin >= 15 && p.morale < 30 && p.personality.loyal < 55 && chance(0.06 * (1 - p.personality.loyal / 60))) {
     p.tradeRequest = true;
-    addNews(league, `📢 ${p.name} has requested a trade from the ${team.name}.`);
+    addNews(league, `📢 ${p.name} has requested a trade from the ${team.name}.`, { pid: p.id, team: team.abbr });
+    tradeRequestBuzz(league, p, team);
   } else if (p.tradeRequest && p.morale > 60) {
     p.tradeRequest = false;
     addNews(league, `${p.name} has rescinded his trade request.`);
@@ -421,8 +431,11 @@ function playGame(league: League, homeAbbr: string, awayAbbr: string, id: number
       const p = league.players[l.id];
       if (!p) continue;
       addLine(playoff ? p.playoffStats : p.stats, l);
-      if (l.pts >= 45) addNews(league, `${p.name} dropped ${l.pts} points vs ${isHome ? awayAbbr : homeAbbr}!`);
-      else if (l.pts >= 10 && l.orb + l.drb >= 10 && l.ast >= 10) addNews(league, `${p.name} posted a triple-double (${l.pts}/${l.orb + l.drb}/${l.ast}).`);
+      if (!playoff) recordPeriodLine(league, l, won);
+      const tripleDouble = l.pts >= 10 && l.orb + l.drb >= 10 && l.ast >= 10;
+      if (l.pts >= 45) addNews(league, `${p.name} dropped ${l.pts} points vs ${isHome ? awayAbbr : homeAbbr}!`, { pid: p.id, team: t.abbr });
+      else if (tripleDouble) addNews(league, `${p.name} posted a triple-double (${l.pts}/${l.orb + l.drb}/${l.ast}).`, { pid: p.id, team: t.abbr });
+      if (l.pts >= 45 || tripleDouble) bigGameBuzz(league, p, l);
     }
     // Injured players miss this game, which counts toward their recovery.
     for (const id of t.roster) {
@@ -467,6 +480,7 @@ export function simDay(league: League): GameResult[] {
     }
     league.day++;
     aiDailyMoves(league);
+    endOfDay(league);
     if (league.schedule.every((g) => g.played)) endRegularSeason(league);
   } else if (league.phase === 'playoffs') {
     results.push(...playoffDay(league));
@@ -493,6 +507,7 @@ export function standings(league: League, conf?: 'East' | 'West'): Team[] {
 }
 
 function endRegularSeason(league: League) {
+  league.period = undefined;
   giveRegularSeasonAwards(league);
   league.phase = 'playoffs';
   const playIn = league.baseSeason >= 2021 || league.season >= 2021;
@@ -718,9 +733,9 @@ export function startNextSeason(league: League) {
   addNews(league, `Welcome to the ${next - 1}-${String(next).slice(2)} offseason. The rookie draft is next.`);
 }
 
-export function addNews(league: League, text: string) {
-  league.news.unshift({ day: league.day, season: league.season, text });
-  if (league.news.length > 300) league.news.length = 300;
+export function addNews(league: League, text: string, extra: Omit<NewsItem, 'day' | 'season' | 'text'> = {}) {
+  league.news.unshift({ day: league.day, season: league.season, text, ...extra });
+  if (league.news.length > 600) league.news.length = 600;
 }
 
 export function teamOvr(league: League, team: Team): number {

@@ -110,10 +110,6 @@ select:disabled { opacity: 0.7; }
 /* ---------- atoms */
 .headshot { border-radius: 50%; object-fit: cover; object-position: top; flex-shrink: 0; display: block; border: 1px solid rgba(255,255,255,0.1); }
 .headshot.initials { display: grid; place-items: center; font-weight: 700; color: #fff; }
-.team-badge {
-  display: inline-grid; place-items: center; border-radius: 6px; font-family: var(--display); font-weight: 800;
-  border-bottom: 3px solid; letter-spacing: 0.03em; flex-shrink: 0; vertical-align: middle;
-}
 .team-link, .player-link { display: inline-flex; align-items: center; gap: 6px; }
 .team-link:hover, .player-link:hover span { color: var(--accent-2); text-decoration: underline; }
 .ovr { display: inline-grid; place-items: center; min-width: 32px; padding: 1px 6px; border-radius: 6px; color: #0b0f17; font-weight: 800; font-family: var(--display); font-size: 16px; }
@@ -150,7 +146,6 @@ select:disabled { opacity: 0.7; }
 }
 .team-tile:hover { border-color: var(--line); }
 .team-tile.selected { color: #fff; font-weight: 700; }
-.swatch { width: 16px; height: 16px; border-radius: 4px; flex-shrink: 0; }
 .saved-row { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .disclaimer { text-align: center; margin-top: 30px; }
 
@@ -175,6 +170,7 @@ select:disabled { opacity: 0.7; }
 
 /* ---------- player */
 .player-page { display: flex; flex-direction: column; gap: 16px; }
+.back-btn { align-self: flex-start; }
 .player-hero { display: flex; gap: 20px; align-items: center; padding: 22px; border-radius: 14px; background: var(--panel); flex-wrap: wrap; }
 .player-hero h2 { font-size: 40px; }
 .player-hero-main { flex: 1; min-width: 220px; }
@@ -243,9 +239,9 @@ select:disabled { opacity: 0.7; }
 .all-league-card { display: flex; flex-direction: column; align-items: center; gap: 6px; background: var(--panel-2); padding: 12px; border-radius: 12px; cursor: pointer; width: 130px; text-align: center; }
 
 
-.team-logo { object-fit: contain; flex-shrink: 0; vertical-align: middle; display: inline-block; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.5)); }
+.team-logo { object-fit: contain; flex-shrink: 0; vertical-align: middle; display: inline-block; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.5)); }
 .team-tile .team-logo { margin-right: 2px; }
-.team-header .team-logo { background: rgba(255,255,255,0.92); border-radius: 12px; padding: 6px; box-sizing: content-box; }
+.team-header .team-logo { filter: drop-shadow(0 3px 6px rgba(0,0,0,0.45)); }
 
 /* ---------- trades */
 .trade { display: flex; flex-direction: column; gap: 16px; }
@@ -385,17 +381,21 @@ select:disabled { opacity: 0.7; }
 
 /* ---------- music */
 .music-dock {
-  position: fixed; right: 16px; bottom: 16px; z-index: 30; width: 320px;
-  background: rgba(19, 26, 38, 0.96); border: 1px solid var(--line); border-radius: 14px;
+  position: fixed; right: 12px; bottom: 12px; z-index: 30; width: 220px;
+  background: rgba(19, 26, 38, 0.96); border: 1px solid var(--line); border-radius: 999px;
   box-shadow: 0 10px 30px rgba(0,0,0,0.45); backdrop-filter: blur(8px); overflow: hidden;
 }
-.music-bar { display: flex; align-items: center; gap: 6px; padding: 8px; }
-.music-art { width: 42px; height: 42px; border-radius: 8px; overflow: hidden; border: 0; padding: 0; background: var(--panel-2); cursor: pointer; flex-shrink: 0; color: var(--accent); font-size: 20px; }
+.music-dock.expanded { width: 300px; border-radius: 14px; }
+.music-bar { display: flex; align-items: center; gap: 2px; padding: 4px 6px 4px 4px; }
+.music-dock.expanded .music-bar { gap: 6px; padding: 8px; }
+.music-art { width: 30px; height: 30px; border-radius: 50%; overflow: hidden; border: 0; padding: 0; background: var(--panel-2); cursor: pointer; flex-shrink: 0; color: var(--accent); font-size: 20px; }
+.music-dock.expanded .music-art { width: 42px; height: 42px; border-radius: 8px; }
 .music-art img { width: 100%; height: 100%; object-fit: cover; }
 .music-info { flex: 1; min-width: 0; cursor: pointer; }
-.music-song { font-weight: 700; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.music-info { padding-left: 4px; }
+.music-song { font-weight: 600; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .music-artist { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.music-dock .icon-btn { font-size: 16px; color: var(--text); }
+.music-dock .icon-btn { font-size: 14px; color: var(--text); padding: 2px 4px; }
 .music-extra { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; padding: 0 12px 10px; font-size: 12px; color: var(--muted); }
 .music-extra input[type=range] { width: 110px; vertical-align: middle; accent-color: var(--accent); }
 /* The YouTube player stays mounted (it has to, to keep playing) but sits off-screen unless "Show video" is on. */
@@ -413,10 +413,44 @@ select:disabled { opacity: 0.7; }
 .np-artist { color: #cbd5e1; font-size: 13px; }
 @keyframes np-in { from { transform: translateX(-120%); opacity: 0; } to { transform: none; opacity: 1; } }
 @keyframes np-out { to { transform: translateX(-120%); opacity: 0; } }
-.content { padding-bottom: 110px; }
+.content { padding-bottom: 64px; }
 @media (max-width: 820px) {
-  .music-dock { left: 8px; right: 8px; bottom: 8px; width: auto; }
-  .now-playing-toast { left: 8px; bottom: 76px; }
+  .music-dock { right: 8px; bottom: 8px; width: 190px; }
+  .music-dock.expanded { left: 8px; width: auto; }
+  .now-playing-toast { left: 8px; bottom: 56px; }
   .np-song { font-size: 18px; }
   .now-playing-toast img { width: 48px; height: 48px; }
 }
+
+/* ---------- offensive role & mixed systems */
+.chip { color: var(--text); }
+.chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.chip:disabled { opacity: 0.4; cursor: default; }
+.role-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.role-presets .chip { font-size: 12px; padding: 3px 10px; }
+.role-rows { display: flex; flex-direction: column; gap: 6px; }
+.role-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.role-label { font-size: 13px; }
+.role-row .seg button { padding: 4px 8px; font-size: 12px; }
+.role-row .seg button:disabled { cursor: default; }
+.shot-mix td, .shot-mix th { text-align: center; }
+.trade-search-controls { display: flex; gap: 8px; flex-wrap: wrap; }
+.trade-search-controls input { width: 200px; max-width: 100%; }
+.trade-search-results { max-height: 360px; overflow-y: auto; }
+
+/* ---------- news & social feed */
+.feed-filters { margin-bottom: 10px; flex-wrap: wrap; }
+.feed li.mine { box-shadow: inset 3px 0 0 var(--accent); padding-left: 10px; }
+.feed-post { display: flex; gap: 10px; align-items: flex-start; }
+.feed-avatar { flex-shrink: 0; width: 34px; height: 34px; }
+.feed-avatar > span { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: var(--panel-2); border: 1px solid var(--line); font-size: 16px; }
+.feed-avatar > span.outlet { background: #1e2a44; }
+.feed-body { min-width: 0; flex: 1; }
+.feed-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; }
+.feed-head .muted.small:last-child { margin-left: auto; }
+.feed-tag { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; background: var(--accent); color: #fff; border-radius: 4px; padding: 0 5px; font-weight: 700; }
+.feed-text { margin-top: 2px; overflow-wrap: anywhere; }
+.feed-award { background: linear-gradient(90deg, rgba(255,181,71,0.12), transparent 70%); padding-left: 8px !important; }
+.honor-row { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid #1b2537; }
+.honor-row.mine { box-shadow: inset 3px 0 0 var(--accent); padding-left: 10px; }
+.honor-name { display: flex; align-items: center; gap: 6px; font-weight: 600; }

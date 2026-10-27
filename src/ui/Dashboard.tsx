@@ -4,6 +4,7 @@ import { ROSTER_MAX, signPlayer, standings, startNextSeason, teamOvr, updateChem
 import { ovr } from '../engine/ratings';
 import { seasonLabel } from '../data/teams';
 import { changed, go, useLeague } from '../store';
+import { Honors, NewsFeed } from './Feed';
 import { Card, f1, Headshot, Ovr, PlayerLink, perGameRow, TeamBadge, TeamLink, Th, useSort } from './common';
 
 export function Dashboard() {
@@ -103,9 +104,12 @@ export function Dashboard() {
         </Card>
       </div>
 
-      <Card title="League news" right={<button className="btn small ghost" onClick={() => go({ name: 'news' })}>All news</button>}>
-        <ul className="news">{league.news.slice(0, 12).map((n, i) => <li key={i}><span className="muted small">{seasonLabel(n.season)} · day {n.day + 1}</span> {n.text}</li>)}</ul>
-      </Card>
+      <div className="two-col">
+        <Card title="League buzz" right={<button className="btn small ghost" onClick={() => go({ name: 'news' })}>All news</button>}>
+          <NewsFeed league={league} limit={10} />
+        </Card>
+        <Honors league={league} />
+      </div>
     </div>
   );
 }
@@ -196,8 +200,8 @@ export function History() {
 export function News() {
   const league = useLeague();
   return (
-    <Card title="News">
-      <ul className="news">{league.news.map((n, i) => <li key={i}><span className="muted small">{seasonLabel(n.season)} · day {n.day + 1}</span> {n.text}</li>)}</ul>
+    <Card title="News & social">
+      <NewsFeed league={league} filters />
     </Card>
   );
 }

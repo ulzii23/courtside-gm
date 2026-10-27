@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import type { League, Player, SeasonLine } from '../types';
-import { headshotUrl, logoUrl } from '../data/teams';
+import { headshotUrl } from '../data/teams';
 import { ovr } from '../engine/ratings';
 import { go } from '../store';
 
@@ -30,46 +30,58 @@ export function Headshot({ p, size = 40, league }: { p: Player; size?: number; l
   );
 }
 
-export function TeamLogo({ abbr, season, name, size, fallback }: { abbr: string; season: number; name: string; size: number; fallback: ReactNode }) {
-  const [failed, setFailed] = useState(false);
-  if (failed) return <>{fallback}</>;
+// Team crest drawn as SVG in the team's colors: a shield with the abbreviation and basketball seams.
+export function TeamLogo({ abbr, name, colors, size }: { abbr: string; name: string; colors: [string, string]; size: number }) {
+  const [primary, secondary] = colors;
+  const id = `crest-${abbr}`;
+  // A black or primary-colored trim would vanish on the dark UI, so fall back to light grey.
+  const trim = secondary.toLowerCase() === primary.toLowerCase() || lum(secondary) < 40 ? '#d1d5db' : secondary;
   return (
-    <img
-      className="team-logo"
-      src={logoUrl(abbr, season)}
-      alt={name}
-      title={name}
-      width={size}
-      height={size}
-      loading="lazy"
-      onError={() => setFailed(true)}
-    />
+    <svg className="team-logo" width={(size * 40) / 44} height={size} viewBox="0 0 40 44" role="img" aria-label={name}>
+      <title>{name}</title>
+      <defs>
+        <linearGradient id={id} x1="0" y1="0" x2="0.4" y2="1">
+          <stop offset="0" stopColor={shade(primary, 0.18)} />
+          <stop offset="1" stopColor={shade(primary, -0.28)} />
+        </linearGradient>
+      </defs>
+      <path d="M20 1.5 L37.5 6.5 V22 C37.5 32.5 30 39.5 20 42.5 C10 39.5 2.5 32.5 2.5 22 V6.5 Z" fill={`url(#${id})`} stroke={trim} strokeWidth="2.2" strokeLinejoin="round" />
+      <g fill="none" stroke={textOn(primary)} strokeOpacity="0.14" strokeWidth="1.2">
+        <path d="M20 4 V40" />
+        <path d="M5 22 H35" />
+        <path d="M8 9 C15 15 15 29 8 35" />
+        <path d="M32 9 C25 15 25 29 32 35" />
+      </g>
+      <text
+        x="20" y="27.5" textAnchor="middle" fill={textOn(primary)}
+        fontFamily="'Barlow Condensed', 'Arial Narrow', sans-serif" fontWeight="800" fontSize="14.5" letterSpacing="0.3"
+        stroke={shade(primary, -0.45)} strokeWidth="0.6" paintOrder="stroke"
+      >{abbr}</text>
+    </svg>
   );
 }
 
 export function TeamBadge({ league, abbr, size = 28 }: { league: League; abbr: string; size?: number }) {
   const t = league.teams[abbr];
   if (!t) return <span className="muted">{abbr}</span>;
-  return <TeamLogo abbr={abbr} season={league.season} name={t.name} size={size} fallback={<ColorBadge league={league} abbr={abbr} size={size} />} />;
+  return <TeamLogo abbr={abbr} name={t.name} colors={t.colors} size={size} />;
 }
 
-function ColorBadge({ league, abbr, size }: { league: League; abbr: string; size: number }) {
-  const t = league.teams[abbr];
-  return (
-    <span
-      className="team-badge"
-      title={t.name}
-      style={{ background: t.colors[0], color: textOn(t.colors[0]), borderColor: t.colors[1], width: size * 1.6, height: size, fontSize: size * 0.38 }}
-    >
-      {t.abbr}
-    </span>
-  );
+// Lighten (amt > 0) or darken (amt < 0) a hex color.
+function shade(hex: string, amt: number) {
+  const n = parseInt(hex.slice(1), 16);
+  const ch = (v: number) => Math.round(amt >= 0 ? v + (255 - v) * amt : v * (1 + amt));
+  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map(ch);
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
+}
+
+function lum(hex: string) {
+  const n = parseInt(hex.slice(1), 16);
+  return ((n >> 16) & 255) * 0.299 + ((n >> 8) & 255) * 0.587 + (n & 255) * 0.114;
 }
 
 function textOn(hex: string) {
-  const n = parseInt(hex.slice(1), 16);
-  const lum = ((n >> 16) & 255) * 0.299 + ((n >> 8) & 255) * 0.587 + (n & 255) * 0.114;
-  return lum > 150 ? '#111' : '#fff';
+  return lum(hex) > 150 ? '#111' : '#fff';
 }
 
 export function TeamLink({ league, abbr, full = false }: { league: League; abbr: string; full?: boolean }) {

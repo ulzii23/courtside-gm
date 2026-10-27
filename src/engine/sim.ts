@@ -1,4 +1,4 @@
-import type { BoxLine, BoxTeam, Player, Team } from '../types';
+import type { BoxLine, BoxTeam, DefenseSystem, Focus, OffenseSystem, Player, Team } from '../types';
 import { statFrom } from './ratings';
 import { chance, pickWeighted, random } from './random';
 
@@ -18,6 +18,69 @@ interface SimPlayer {
   // cached stat values
   p2: number; p3: number; pft: number; ftr: number; t3: number; ast: number; tov: number;
   orb: number; drb: number; stl: number; blk: number; dbpm: number; usg: number; staMin: number;
+  prof: ShotProfile;
+  shootMul: number; passMul: number; crashMul: number; tovMul: number; fatigueMul: number;
+}
+
+// ---------------------------------------------------------------- shot zones & offensive focus
+
+export type Zone = 'rim' | 'post' | 'mid' | 'three';
+export const ZONES: Zone[] = ['rim', 'post', 'mid', 'three'];
+type ZoneMap = Record<Zone, number>;
+
+const BIGNESS: Record<string, number> = { PG: 0.1, SG: 0.15, SF: 0.4, PF: 0.75, C: 1 };
+// Free throw trips, blocks and assisted makes differ a lot by where the shot comes from.
+const ZONE_FTR: ZoneMap = { rim: 1.7, post: 1.3, mid: 0.35, three: 0.12 };
+const ZONE_BLK: ZoneMap = { rim: 1.15, post: 1.0, mid: 0.4, three: 0.12 };
+const ZONE_AST: ZoneMap = { rim: 0.6, post: 0.38, mid: 0.5, three: 0.86 };
+const LEVEL_MUL = [0.2, 0.5, 1, 1.8, 3];
+const clamp = (x: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, x));
+
+export const focusMul = (lv?: number) => LEVEL_MUL[clamp(Math.round(lv ?? 0), -2, 2) + 2];
+
+export interface ShotProfile {
+  natural: ZoneMap; // share of shots from each zone when he plays his own game
+  share: ZoneMap; // share with the GM's focus applied
+  pct: ZoneMap; // make chance by zone (before defense, fatigue etc.)
+  ftrNorm: number; // keeps his overall free throw rate equal to his rating on his natural mix
+}
+
+export function shotProfile(p: Player, focus: Focus | undefined = p.focus): ShotProfile {
+  const r = p.ratings;
+  const big = BIGNESS[p.pos] ?? 0.4;
+  const drwN = (r.drw - 50) / 50;
+  let rim = clamp(0.38 + 0.12 * big + 0.1 * drwN, 0.2, 0.65);
+  let post = clamp(0.06 + 0.22 * big, 0.04, 0.32);
+  let mid = Math.max(0.1, 1 - rim - post);
+  const sum2 = rim + post + mid;
+  rim /= sum2; post /= sum2; mid /= sum2;
+  const t3 = p.tend.t3;
+  const natural: ZoneMap = { rim: (1 - t3) * rim, post: (1 - t3) * post, mid: (1 - t3) * mid, three: t3 };
+
+  // Zone offsets around his real 2P%, chosen so his natural mix reproduces it exactly.
+  const p2 = statFrom('ins', r.ins);
+  const off = { rim: 0.14 + 0.02 * big, post: -0.02 + 0.03 * ((r.ins - 50) / 50), mid: -0.09 + 0.04 * ((r.ft - 50) / 50) };
+  const mean = rim * off.rim + post * off.post + mid * off.mid;
+  const pct: ZoneMap = {
+    rim: p2 - mean + off.rim, post: p2 - mean + off.post, mid: p2 - mean + off.mid, three: statFrom('tp', r.tp),
+  };
+
+  // Focus: scale each zone; "more" also guarantees some volume for shots he rarely takes.
+  const w = {} as ZoneMap;
+  for (const z of ZONES) {
+    const m = focusMul(focus?.[z]);
+    w[z] = natural[z] * m + (m > 1 ? (m - 1) * 0.06 : 0);
+  }
+  const tot = ZONES.reduce((a, z) => a + w[z], 0);
+  const share = {} as ZoneMap;
+  for (const z of ZONES) {
+    share[z] = w[z] / tot;
+    // Forcing shots he isn't used to taking costs efficiency.
+    const forced = share[z] / Math.max(0.01, natural[z]);
+    if (forced > 1) pct[z] -= Math.min(0.08, 0.025 * Math.log2(forced));
+  }
+  const ftrNorm = ZONES.reduce((a, z) => a + natural[z] * ZONE_FTR[z], 0);
+  return { natural, share, pct, ftrNorm };
 }
 
 interface SimTeam {
@@ -79,8 +142,20 @@ function makeSimPlayer(p: Player, targetMin: number, starter: boolean): SimPlaye
     dbpm: statFrom('def', r.def),
     usg: Math.max(6, statFrom('usg', r.usg)),
     staMin: Math.max(10, statFrom('sta', r.sta)),
+    prof: shotProfile(p),
+    shootMul: Math.sqrt(focusMul(p.focus?.shoot)) / Math.pow(focusMul(p.focus?.pass), 0.35),
+    passMul: focusMul(p.focus?.pass),
+    crashMul: Math.pow(focusMul(p.focus?.crash), 0.5),
+    tovMul: 1 + clamp(p.focus?.pass ?? 0, 0, 2) * 0.05,
+    fatigueMul: 1 + clamp(p.focus?.crash ?? 0, 0, 2) * 0.05,
   };
 }
+
+const pickOne = <T,>(xs: T[]): T => xs[Math.floor(random() * xs.length)];
+const share = <T,>(xs: T[], x: T) => xs.filter((y) => y === x).length / Math.max(1, xs.length);
+
+const OFFENSE_PACE: Partial<Record<OffenseSystem, number>> = { 'run-gun': 6, 'pace-space': 2, 'inside-out': -2, 'post-up': -3, iso: -2 };
+const DEFENSE_PACE: Partial<Record<DefenseSystem, number>> = { press: 4 };
 
 export function simulateGame(
   homeTeam: Team,
@@ -118,10 +193,11 @@ export function simulateGame(
   const H = build(homeTeam, true);
   const A = build(awayTeam, false);
 
+  const avgOf = <T extends string>(xs: T[], table: Partial<Record<T, number>>) =>
+    xs.reduce((s, x) => s + (table[x] ?? 0), 0) / Math.max(1, xs.length);
   const paceAdj = (t: Team) =>
     (t.strategy.pace === 'fast' ? 4 : t.strategy.pace === 'slow' ? -4 : 0) +
-    (t.strategy.offense === 'run-gun' ? 6 : t.strategy.offense === 'pace-space' ? 2 : t.strategy.offense === 'inside-out' ? -2 : 0) +
-    (t.strategy.defense === 'press' ? 4 : 0);
+    avgOf(t.strategy.offense, OFFENSE_PACE) + avgOf(t.strategy.defense, DEFENSE_PACE);
   const pace = Math.max(80, leaguePace + (paceAdj(homeTeam) + paceAdj(awayTeam)) / 2);
   const avgPossSec = 2880 / (2 * pace);
 
@@ -182,11 +258,12 @@ export function simulateGame(
 
   function tick(secs: number) {
     for (const t of [H, A]) {
-      const fatigueRate = (t.team.strategy.defense === 'press' ? 1.2 : 1) * (t.team.strategy.offense === 'run-gun' ? 1.12 : 1);
+      const st = t.team.strategy;
+      const fatigueRate = (1 + 0.2 * share(st.defense, 'press')) * (1 + 0.12 * share(st.offense, 'run-gun'));
       for (const x of t.players) {
         if (t.onCourt.includes(x)) {
           x.secs += secs;
-          x.energy = Math.max(0.3, x.energy - secs * fatigueRate * (0.00105 * 30 / x.staMin));
+          x.energy = Math.max(0.3, x.energy - secs * fatigueRate * x.fatigueMul * (0.00105 * 30 / x.staMin));
         } else {
           x.energy = Math.min(1, x.energy + secs * 0.0016);
         }
@@ -231,10 +308,10 @@ export function simulateGame(
 
   // Returns true if the offense keeps the ball (offensive rebound).
   function rebound(off: SimTeam, def: SimTeam, mods: { orb: number }): boolean {
-    const orbSum = off.onCourt.reduce((s, x) => s + x.orb, 0) * mods.orb;
+    const orbSum = off.onCourt.reduce((s, x) => s + x.orb * x.crashMul, 0) * mods.orb;
     const drbSum = def.onCourt.reduce((s, x) => s + x.drb, 0);
     if (random() < orbSum / (orbSum + drbSum)) {
-      const r = pickWeighted(off.onCourt, (x) => x.orb);
+      const r = pickWeighted(off.onCourt, (x) => x.orb * x.crashMul);
       r.line.orb++;
       return true;
     }
@@ -244,33 +321,48 @@ export function simulateGame(
   }
 
   function possession(off: SimTeam, def: SimTeam): number {
-    const os = off.team.strategy;
-    const ds = def.team.strategy;
+    // Teams that mix systems pick one each trip down the floor.
+    const os = pickOne(off.team.strategy.offense);
+    const ds = pickOne(def.team.strategy.defense);
     let elapsed = avgPossSec * (0.55 + random() * 0.9);
 
-    // Strategy modifiers
-    let t3Mul = 1, p2Add = 0, p3Add = 0, tovMul = 1, orbMul = 1, astAdd = 0, ftrMul = 1;
+    // Strategy modifiers: zm scales how often each zone is shot, za adds to its make chance.
+    const zm: ZoneMap = { rim: 1, post: 1, mid: 1, three: 1 };
+    const za: ZoneMap = { rim: 0, post: 0, mid: 0, three: 0 };
+    let tovMul = 1, orbMul = 1, astAdd = 0, ftrMul = 1;
     const avgOnCourt = (f: (x: SimPlayer) => number) => off.onCourt.reduce((s, x) => s + f(x), 0) / off.onCourt.length;
-    switch (os.offense) {
+    const all2 = (v: number) => { za.rim += v; za.post += v; za.mid += v; };
+    switch (os) {
       case 'pace-space': {
-        t3Mul *= 1.25;
-        p3Add += ((avgOnCourt((x) => x.p.ratings.tp) - 50) / 25) * 0.01;
+        zm.three *= 1.25;
+        za.three += ((avgOnCourt((x) => x.p.ratings.tp) - 50) / 25) * 0.01;
         break;
       }
-      case 'inside-out': t3Mul *= 0.8; ftrMul *= 1.15; orbMul *= 1.12; p2Add += 0.008; break;
-      case 'motion': astAdd += 0.08; tovMul *= 0.92; p2Add += ((avgOnCourt((x) => x.p.ratings.pas) - 45) / 25) * 0.008; break;
-      case 'run-gun': tovMul *= 1.08; p2Add += 0.01; break;
-      case 'heliocentric': p3Add += 0.004; break;
+      case 'inside-out': zm.three *= 0.8; zm.post *= 1.25; zm.rim *= 1.1; ftrMul *= 1.15; orbMul *= 1.12; all2(0.008); break;
+      case 'motion': astAdd += 0.08; tovMul *= 0.92; all2(((avgOnCourt((x) => x.p.ratings.pas) - 45) / 25) * 0.008); break;
+      case 'run-gun': tovMul *= 1.08; zm.rim *= 1.2; za.rim += 0.012; all2(0.004); break;
+      case 'heliocentric': za.three += 0.004; break;
+      case 'pick-roll': {
+        zm.rim *= 1.12; zm.mid *= 1.12; astAdd += 0.04;
+        const fit = ((Math.max(...off.onCourt.map((x) => x.p.ratings.pas)) - 50) / 25) * 0.01;
+        za.rim += 0.006 + fit; za.mid += 0.004 + fit / 2;
+        break;
+      }
+      case 'post-up': zm.post *= 1.6; zm.three *= 0.9; za.post += 0.012; ftrMul *= 1.08; orbMul *= 1.05; break;
+      case 'iso': zm.mid *= 1.3; astAdd -= 0.15; tovMul *= 0.94; break;
     }
     const defOnCourt = def.onCourt;
     const avgDef = defOnCourt.reduce((s, x) => s + x.dbpm, 0) / defOnCourt.length;
     const defFit = (avgDef - defMean) / 2; // ~ -1..1
-    switch (ds.defense) {
-      case 'switch': p3Add -= 0.012 * Math.max(0, defFit + 0.5); p2Add -= 0.006 * defFit; orbMul *= 1.08; break;
-      case 'drop': p2Add -= 0.02; t3Mul *= 1.1; p3Add += 0.008; break;
-      case 'zone': t3Mul *= 1.2; p2Add -= 0.015; orbMul *= 1.15; tovMul *= 1.03; break;
-      case 'press': tovMul *= 1.15; p2Add += 0.015; break;
+    switch (ds) {
+      case 'switch': za.three -= 0.012 * Math.max(0, defFit + 0.5); all2(-0.006 * defFit); orbMul *= 1.08; break;
+      case 'drop': za.rim -= 0.03; za.post -= 0.015; za.mid += 0.012; zm.mid *= 1.1; zm.three *= 1.1; za.three += 0.008; break;
+      case 'zone': zm.three *= 1.2; za.rim -= 0.02; za.post -= 0.02; orbMul *= 1.15; tovMul *= 1.03; break;
+      case 'press': tovMul *= 1.15; za.rim += 0.02; all2(0.005); break;
     }
+    // Spacing: a lineup that has stopped shooting threes lets the defense pack the paint.
+    const spacing = clamp(avgOnCourt((x) => x.prof.natural.three - x.prof.share.three) * 0.12, -0.01, 0.025);
+    za.rim -= spacing; za.post -= spacing;
     // Defenders on the floor vs league average: each point of team DBPM ~ 1.5% FG.
     const defAdj = -(avgDef - defMean) * 0.015;
     const stlSum = defOnCourt.reduce((s, x) => s + x.stl, 0);
@@ -281,9 +373,11 @@ export function simulateGame(
     // Pick the player who ends the possession.
     const shooter = pickWeighted(off.onCourt, (x) => {
       let w = x.usg;
-      if (os.offense === 'motion') w = Math.pow(x.usg, 0.6) * 4;
-      if (x === off.closer && (os.offense === 'heliocentric' || clutch)) w *= clutch ? 2.5 : 1.8;
-      return w * (0.7 + 0.3 * x.energy);
+      if (os === 'motion') w = Math.pow(x.usg, 0.6) * 4;
+      if (os === 'iso') w = Math.pow(x.usg, 1.5) / 5;
+      if (os === 'post-up' && BIGS.has(x.p.pos)) w *= 1.4;
+      if (x === off.closer && (os === 'heliocentric' || clutch)) w *= clutch ? 2.5 : 1.8;
+      return w * x.shootMul * (0.7 + 0.3 * x.energy);
     });
     const perf = (0.93 + 0.07 * shooter.energy) + ((shooter.p.morale - 60) / 40) * 0.008 + off.chemMod;
     const clutchAdd = clutch ? ((shooter.p.personality.clutch - 50) / 50) * 0.035 : 0;
@@ -303,7 +397,7 @@ export function simulateGame(
     }
 
     // Turnover
-    const tovP = (shooter.tov / 100) * tovMul * (1 + (stlSum - 8) / 16) * (1.15 - 0.15 * shooter.energy);
+    const tovP = (shooter.tov / 100) * tovMul * shooter.tovMul * (1 + (stlSum - 8) / 16) * (1.15 - 0.15 * shooter.energy);
     if (chance(tovP)) {
       shooter.line.tov++;
       if (chance(Math.min(0.85, stlSum / 100 / 0.135))) {
@@ -316,25 +410,27 @@ export function simulateGame(
     // Non-shooting foul that just resets the possession (counts toward foul trouble).
     if (chance(0.06)) foul(def, off);
 
+    // Where the shot comes from.
+    const zone = pickWeighted(ZONES, (z) => shooter.prof.share[z] * zm[z]);
+    const three = zone === 'three';
+
     // Shooting foul trip
-    const ftr = shooter.ftr * ftrMul;
+    const ftr = (shooter.ftr * ftrMul * ZONE_FTR[zone]) / shooter.prof.ftrNorm;
     if (chance((0.44 * ftr) / (1 + 0.44 * ftr))) {
       foul(def, off);
-      const missedLast = freeThrows(off, def, shooter, 2);
+      const missedLast = freeThrows(off, def, shooter, three ? 3 : 2);
       if (missedLast && rebound(off, def, { orb: orbMul * 0.5 })) return elapsed + possessionContinue(off, def);
       return elapsed;
     }
 
-    const three = chance(Math.min(0.92, shooter.t3 * t3Mul));
     shooter.line.fga++;
     if (three) shooter.line.tpa++;
-    let make: number;
-    if (three) make = shooter.p3 + p3Add + defAdj * 0.8 + homeAdd + clutchAdd;
-    else make = shooter.p2 + p2Add + defAdj + homeAdd + clutchAdd;
+    let make = shooter.prof.pct[zone] + za[zone] + defAdj * (three ? 0.8 : 1) + homeAdd + clutchAdd;
     make = make * perf;
 
-    const blocked = !three ? chance((blkSum / 100) * 0.9) : chance((blkSum / 100) * 0.12);
-    if (!blocked) make = make / (1 - (!three ? (blkSum / 100) * 0.9 : (blkSum / 100) * 0.12));
+    const blkRate = (blkSum / 100) * ZONE_BLK[zone];
+    const blocked = chance(blkRate);
+    if (!blocked) make = make / (1 - blkRate);
     if (!blocked && chance(Math.max(0.05, Math.min(0.9, make)))) {
       const pts = three ? 3 : 2;
       shooter.line.fgm++;
@@ -343,12 +439,12 @@ export function simulateGame(
       addPoints(off, def, pts);
       // Assist
       const creatorAdj = 1 - Math.max(0, (shooter.usg - 20) / 60);
-      if (chance(((three ? 0.86 : 0.56) + astAdd) * creatorAdj)) {
+      if (chance((ZONE_AST[zone] + astAdd) * creatorAdj)) {
         const mates = off.onCourt.filter((x) => x !== shooter);
-        if (mates.length) pickWeighted(mates, (x) => Math.pow(x.ast, 1.6)).line.ast++;
+        if (mates.length) pickWeighted(mates, (x) => Math.pow(x.ast, 1.6) * x.passMul).line.ast++;
       }
       // And-one
-      if (!three && chance(0.055 * (shooter.ftr / 0.3))) {
+      if (!three && chance(0.055 * (shooter.ftr / 0.3) * (ZONE_FTR[zone] / 1.2))) {
         foul(def, off);
         freeThrows(off, def, shooter, 1);
       }

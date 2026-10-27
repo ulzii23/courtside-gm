@@ -177,6 +177,11 @@ function aiTrade(league: League) {
 export function migrateLeague(league: League) {
   league.trades ??= [];
   if (league.draft && league.draft.started === undefined) Object.assign(league.draft, { started: true, timer: 0, queue: [] });
+  for (const t of Object.values(league.teams)) {
+    const st = t.strategy as unknown as { offense: unknown; defense: unknown };
+    if (!Array.isArray(st.offense)) st.offense = [st.offense ?? 'balanced'];
+    if (!Array.isArray(st.defense)) st.defense = [st.defense ?? 'man'];
+  }
   for (const p of Object.values(league.players)) {
     if (p.personality.loyal === undefined) {
       p.personality.loyal = Math.round(Math.max(5, Math.min(99, 52 + (p.age - 26) * 1.2 + (hashUnit(p.id, 7) * 2 - 1) * 38)));

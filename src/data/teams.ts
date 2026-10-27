@@ -91,8 +91,3 @@ export function headshotUrl(img: string): string {
   return `https://www.basketball-reference.com/req/202106291/images/headshots/${img}.jpg`;
 }
 
-// Season-accurate team logos (e.g. SEA-2008, CHA-2010). Fictional seasons reuse the latest real logo.
-export const LATEST_LOGO_SEASON = 2026;
-export function logoUrl(abbr: string, season: number): string {
-  return `https://cdn.ssref.net/req/202410231/tlogo/bbr/${abbr}-${Math.min(season, LATEST_LOGO_SEASON)}.png`;
-}

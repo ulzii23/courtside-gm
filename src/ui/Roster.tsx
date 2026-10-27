@@ -2,7 +2,8 @@ import { autoRotation, normalizeMinutes, releasePlayer, ROSTER_MIN, teamOvr, upd
 import { ovr, statFrom } from '../engine/ratings';
 import { changed, go, useLeague } from '../store';
 import type { DefenseSystem, OffenseSystem, Pace, Team } from '../types';
-import { Bar, Card, f1, Headshot, moraleLabel, Ovr, PlayerLink, perGameRow, TeamBadge } from './common';
+import { roleSummary } from './OffenseRole';
+import { Bar, Card, f1, Headshot, moraleLabel, Ovr, PlayerLink, perGameRow, rColor, TeamBadge } from './common';
 
 export const OFFENSES: Record<OffenseSystem, [string, string]> = {
   balanced: ['Balanced', 'No special emphasis. Safe for any roster.'],
@@ -11,6 +12,9 @@ export const OFFENSES: Record<OffenseSystem, [string, string]> = {
   heliocentric: ['Heliocentric', 'Run everything through your go-to player. Great with one elite creator.'],
   motion: ['Motion', 'Ball movement: more assists, fewer turnovers, shots spread out. Rewards good passers.'],
   'run-gun': ['Run & Gun', 'Push the pace hard: easier looks in transition, more turnovers, more fatigue.'],
+  'pick-roll': ['Pick & Roll', 'Screens for the ball handler: more drives and pull-up jumpers. Best with an elite passer.'],
+  'post-up': ['Post-Up', 'Feed the bigs on the block: lots of post-ups and free throws, fewer threes, slower pace.'],
+  iso: ['Isolation', 'Clear out for your best scorers: fewer turnovers and assists, lots of mid-range.'],
 };
 
 export const DEFENSES: Record<DefenseSystem, [string, string]> = {
@@ -85,6 +89,8 @@ export function Roster({ teamAbbr }: { teamAbbr?: string }) {
                   <th></th><th></th><th>Player</th><th title="Target minutes per game">MIN</th>{mine && <th></th>}<th>Pos</th><th>Age</th><th>OVR</th><th>POT</th>
                   <th title="Minutes he can play before fatigue sets in">Stam.</th>
                   <th>Morale</th>
+                  <th title="Ego: high-ego players want minutes and shots">Ego</th>
+                  <th title="Offensive role (set it on the player's page)">Role</th>
                   <th>GP</th><th>PTS</th><th>REB</th><th>AST</th>
                 </tr>
               </thead>
@@ -136,6 +142,8 @@ export function Roster({ teamAbbr }: { teamAbbr?: string }) {
                       <td>{p.pot}</td>
                       <td>{Math.round(statFrom('sta', p.ratings.sta))}m</td>
                       <td><span style={{ color: mc }} title={`${Math.round(p.morale)}/100 — expects ~${Math.round(p.expMin)} min`}>{ml}</span></td>
+                      <td><span className="rating-num" style={{ color: rColor(100 - p.personality.ego) }}>{p.personality.ego}</span></td>
+                      <td className="nowrap">{mine ? <a className="player-link" onClick={() => go({ name: 'player', id })}>{roleSummary(p.focus)}</a> : roleSummary(p.focus)}</td>
                       <td>{s.g}</td><td>{f1(s.pts)}</td><td>{f1(s.reb)}</td><td>{f1(s.ast)}</td>
                     </tr>
                   );
@@ -154,17 +162,13 @@ export function Roster({ teamAbbr }: { teamAbbr?: string }) {
 
         <div className="side-col">
           <Card title="Game plan">
-            <Select
-              label="Offense" disabled={!mine} value={team.strategy.offense}
-              options={Object.entries(OFFENSES).map(([k, [l]]) => [k, l])}
-              onChange={(v) => update((t) => { t.strategy.offense = v as OffenseSystem; })}
-              hint={OFFENSES[team.strategy.offense][1]}
+            <MultiPick
+              label="Offense" disabled={!mine} value={team.strategy.offense} options={OFFENSES}
+              onChange={(v) => update((t) => { t.strategy.offense = v as OffenseSystem[]; })}
             />
-            <Select
-              label="Defense" disabled={!mine} value={team.strategy.defense}
-              options={Object.entries(DEFENSES).map(([k, [l]]) => [k, l])}
-              onChange={(v) => update((t) => { t.strategy.defense = v as DefenseSystem; })}
-              hint={DEFENSES[team.strategy.defense][1]}
+            <MultiPick
+              label="Defense" disabled={!mine} value={team.strategy.defense} options={DEFENSES}
+              onChange={(v) => update((t) => { t.strategy.defense = v as DefenseSystem[]; })}
             />
             <Select
               label="Pace" disabled={!mine} value={team.strategy.pace}
@@ -202,6 +206,35 @@ export function Roster({ teamAbbr }: { teamAbbr?: string }) {
           </Card>
         </div>
       </div>
+    </div>
+  );
+}
+
+const MAX_SYSTEMS = 3;
+
+// Pick one to three systems; the team mixes them up from possession to possession.
+function MultiPick({ label, value, options, onChange, disabled }: {
+  label: string; value: string[]; options: Record<string, [string, string]>; onChange: (v: string[]) => void; disabled?: boolean;
+}) {
+  const toggle = (k: string) => {
+    if (value.includes(k)) { if (value.length > 1) onChange(value.filter((x) => x !== k)); }
+    else if (value.length < MAX_SYSTEMS) onChange([...value, k]);
+  };
+  return (
+    <div className="field">
+      <span>{label} <small className="muted">(up to {MAX_SYSTEMS}, mixed each possession)</small></span>
+      <div className="role-presets">
+        {Object.entries(options).map(([k, [l, hint]]) => (
+          <button
+            key={k} title={hint} className={`chip ${value.includes(k) ? 'on' : ''}`}
+            disabled={disabled || (!value.includes(k) && value.length >= MAX_SYSTEMS)}
+            onClick={() => toggle(k)}
+          >{l}</button>
+        ))}
+      </div>
+      <ul className="notes small">
+        {value.map((k) => <li key={k}><strong>{options[k][0]}</strong>{value.length > 1 && ` (${Math.round(100 / value.length)}%)`}: <span className="muted">{options[k][1]}</span></li>)}
+      </ul>
     </div>
   );
 }
