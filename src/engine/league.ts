@@ -6,6 +6,7 @@ import { emptyLine, generateRookie, ovr, playerFromRaw, progress, statFrom } fro
 import { makeSchedule } from './schedule';
 import { aiDailyMoves } from './transactions';
 import { bigGameBuzz, endOfDay, recordPeriodLine, tradeRequestBuzz } from './buzz';
+import { afterGame, monthlyDevelopment, onInjury, onReturn, resetSeason, seasonFactor } from './development';
 import { simulateGame } from './sim';
 import { chance, getSeed, random, seed, shuffle } from './random';
 
@@ -436,6 +437,7 @@ function playGame(league: League, homeAbbr: string, awayAbbr: string, id: number
       if (l.pts >= 45) addNews(league, `${p.name} dropped ${l.pts} points vs ${isHome ? awayAbbr : homeAbbr}!`, { pid: p.id, team: t.abbr });
       else if (tripleDouble) addNews(league, `${p.name} posted a triple-double (${l.pts}/${l.orb + l.drb}/${l.ast}).`, { pid: p.id, team: t.abbr });
       if (l.pts >= 45 || tripleDouble) bigGameBuzz(league, p, l);
+      afterGame(p, l);
     }
     // Injured players miss this game, which counts toward their recovery.
     for (const id of t.roster) {
@@ -443,6 +445,7 @@ function playGame(league: League, homeAbbr: string, awayAbbr: string, id: number
       if (p.injury && !box.lines.some((l) => l.id === id && l.min > 0)) {
         p.injury.games--;
         if (p.injury.games <= 0) {
+          onReturn(p);
           p.injury = null;
           if (t.abbr === league.userTeam) addNews(league, `${p.name} has returned from injury.`);
         }
@@ -459,7 +462,7 @@ function playGame(league: League, homeAbbr: string, awayAbbr: string, id: number
   }
   for (const inj of out.injuries) {
     const p = league.players[inj.id];
-    p.injury = { type: inj.type, games: inj.games };
+    onInjury(league, p, inj.type, inj.games);
     if (inj.games >= 10 || p.stats.team === league.userTeam) addNews(league, `${p.name} (${p.stats.team}) injured: ${inj.type}, out ~${inj.games} games.`);
   }
   return result;
@@ -480,6 +483,7 @@ export function simDay(league: League): GameResult[] {
     }
     league.day++;
     aiDailyMoves(league);
+    if (league.day % 30 === 0) monthlyDevelopment(league);
     endOfDay(league);
     if (league.schedule.every((g) => g.played)) endRegularSeason(league);
   } else if (league.phase === 'playoffs') {
@@ -681,7 +685,8 @@ export function startNextSeason(league: League) {
   for (const p of Object.values(league.players)) {
     if (p.stats.g > 0) p.history.push({ ...p.stats });
     if (p.playoffStats.g > 0) p.history.push({ ...p.playoffStats, team: `${p.playoffStats.team} (PO)` });
-    const msg = progress(p);
+    const msg = progress(p, seasonFactor(p));
+    resetSeason(p);
     const o = ovr(p.ratings);
     const retireChance = p.age >= 39 ? 0.9 : p.age >= 36 ? 0.45 : p.age >= 34 && o < 66 ? 0.4 : p.age >= 31 && o < 56 ? 0.35 : 0;
     if (chance(retireChance)) {

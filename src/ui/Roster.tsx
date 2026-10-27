@@ -3,7 +3,7 @@ import { ovr, statFrom } from '../engine/ratings';
 import { changed, go, useLeague } from '../store';
 import type { DefenseSystem, OffenseSystem, Pace, Team } from '../types';
 import { roleSummary } from './OffenseRole';
-import { Bar, Card, f1, Headshot, moraleLabel, Ovr, PlayerLink, perGameRow, rColor, TeamBadge } from './common';
+import { Bar, Card, f1, formLabel, Headshot, moraleLabel, Ovr, PlayerLink, perGameRow, rColor, TeamBadge } from './common';
 
 export const OFFENSES: Record<OffenseSystem, [string, string]> = {
   balanced: ['Balanced', 'No special emphasis. Safe for any roster.'],
@@ -108,6 +108,7 @@ export function Roster({ teamAbbr }: { teamAbbr?: string }) {
                         {team.strategy.captain === id && <span className="tag" title="Captain">C</span>}
                         {team.strategy.closer === id && <span className="tag gold" title="Go-to player">★</span>}
                         {p.tradeRequest && <span className="tag warn" title="Requested a trade">TR</span>}
+                        {(() => { const fl = formLabel(p); return fl && <span className="tag" style={{ color: fl[1] }} title={fl[2]}>{fl[0]}</span>; })()}
                         {p.injury && <div className="inj-text">{p.injury.type} · {p.injury.games}g</div>}
                       </td>
                       <td>
@@ -138,7 +139,10 @@ export function Roster({ teamAbbr }: { teamAbbr?: string }) {
                       )}
                       <td>{p.pos}</td>
                       <td>{p.age}</td>
-                      <td><Ovr p={p} /></td>
+                      <td className="nowrap">
+                        <Ovr p={p} />
+                        {!!p.seasonDelta && <small style={{ color: p.seasonDelta > 0 ? 'var(--win)' : 'var(--loss)' }} title="OVR change this season"> {p.seasonDelta > 0 ? '+' : ''}{p.seasonDelta}</small>}
+                      </td>
                       <td>{p.pot}</td>
                       <td>{Math.round(statFrom('sta', p.ratings.sta))}m</td>
                       <td><span style={{ color: mc }} title={`${Math.round(p.morale)}/100 — expects ~${Math.round(p.expMin)} min`}>{ml}</span></td>

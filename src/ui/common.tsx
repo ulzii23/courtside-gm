@@ -106,6 +106,15 @@ export function PlayerLink({ league, id, showImg = false }: { league: League; id
   );
 }
 
+// Hot / cold streak and rust, as a short label + color (null when unremarkable).
+export function formLabel(p: Player): [string, string, string] | null {
+  const f = p.form ?? 0, r = p.rust ?? 0;
+  if (r >= 0.25) return ['Rusty', '#94a3b8', 'Hasn\'t played much lately: shoots worse and turns it over more until he gets minutes.'];
+  if (f >= 0.3) return ['🔥 Hot', '#f97316', 'Confident after strong recent games: shooting better.'];
+  if (f <= -0.3) return ['🧊 Cold', '#60a5fa', 'Struggling lately: confidence is down and his shooting suffers.'];
+  return null;
+}
+
 export function rColor(v: number) {
   if (v >= 85) return '#22c55e';
   if (v >= 72) return '#84cc16';

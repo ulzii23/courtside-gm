@@ -55,10 +55,15 @@ export interface Player {
   personality: Personality;
   tend: Tendencies;
   focus?: Focus; // offensive role set by the GM
+  // Real stat / ability stat for ratings his real-life role held down or propped up (see ratings.ts).
+  role?: Partial<Record<RatingKey, number>>;
   realTeam: string | null; // team in real life that season
   expMin: number; // minutes the player expects (real role)
   morale: number; // 0-100
-  injury: { type: string; games: number } | null;
+  injury: { type: string; games: number; total?: number } | null;
+  form?: number; // -1 (ice cold) .. +1 (on fire): confidence from recent games
+  rust?: number; // 0..1: sharpness lost sitting out
+  seasonDelta?: number; // OVR change during the current season
   dur: number; // durability 0-100
   stats: SeasonLine; // current season, regular season
   playoffStats: SeasonLine;

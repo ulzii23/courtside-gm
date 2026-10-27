@@ -83,6 +83,26 @@ export function personalityFor(id: string, raw: Partial<RawPlayer> & { age: numb
   };
 }
 
+// Prior for a player with a small sample: the average rotation player at his position (minute-weighted,
+// all seasons), scaled down to replacement level since small samples mostly belong to fringe players.
+// A backup center is assumed to rebound like a (fringe) center, not like an average player.
+type Prior = { p2: number; drw: number; pas: number; tov: number; orb: number; drb: number; stl: number; blk: number };
+const POS_AVG: Record<string, Prior> = {
+  PG: { p2: 0.478, drw: 0.257, pas: 28.4, tov: 14.7, orb: 2.3, drb: 10.8, stl: 1.9, blk: 0.7 },
+  SG: { p2: 0.49, drw: 0.229, pas: 15.0, tov: 11.3, orb: 2.5, drb: 10.9, stl: 1.64, blk: 0.9 },
+  SF: { p2: 0.504, drw: 0.249, pas: 12.1, tov: 11.2, orb: 3.7, drb: 14.0, stl: 1.63, blk: 1.3 },
+  PF: { p2: 0.52, drw: 0.277, pas: 11.1, tov: 11.6, orb: 6.5, drb: 18.5, stl: 1.42, blk: 2.0 },
+  C: { p2: 0.56, drw: 0.365, pas: 10.4, tov: 13.4, orb: 10.2, drb: 23.0, stl: 1.29, blk: 3.7 },
+};
+const replacement = (a: Prior): Prior => ({
+  p2: a.p2 - 0.03, drw: a.drw * 0.92, pas: a.pas * 0.65, tov: a.tov + 1.5,
+  orb: a.orb * 0.85, drb: a.drb * 0.88, stl: a.stl * 0.82, blk: a.blk * 0.78,
+});
+
+// Ratings measure ability, not role. Where a stat mostly reflects how a player was used (a spot-up
+// shooter's assists, a backup's minutes, a center's threes), the rating is estimated from what else his
+// stats reveal. `role` keeps the gap (real stat / ability stat) so the sim still reproduces his real
+// season in his real role, and the GM can unlock the ability by changing the role.
 export function playerFromRaw(raw: RawPlayer, season: number): Player {
   const minutes = raw.mp * raw.g;
   const per36 = (x: number) => (raw.mp > 0 ? (x / raw.mp) * 36 : 0);
@@ -90,27 +110,60 @@ export function playerFromRaw(raw: RawPlayer, season: number): Player {
   const fg3aTot = raw.fg3a * raw.g;
   const fg2aTot = raw.fg2a * raw.g;
   const ftaTot = raw.fta * raw.g;
-  const tpPrior = 0.27 + 0.07 * Math.min(1, per36(raw.fg3a) / 3);
+  const pp = replacement(POS_AVG[raw.pos] ?? POS_AVG.SF);
+  const insPct = (raw.fg2 * raw.g + pp.p2 * 80) / (fg2aTot + 80);
+  // Few free throws: a real three-point sample says a lot about touch (FT% ≈ 0.607 + 0.547 × 3P%).
+  const tpSample = (raw.fg3 * raw.g + 0.34 * 50) / (fg3aTot + 50);
+  const ftPrior = fg3aTot >= 50 ? 0.607 + 0.547 * tpSample : 0.72;
+  const ftPct = (raw.ft * raw.g + ftPrior * 30) / (ftaTot + 30);
+  // Three point ability, not volume: a player who rarely shoots threes isn't necessarily a bad shooter.
+  // Free throw % is the best signal of shooting touch (fit across all seasons: 3P% ≈ 0.224 + 0.175 × FT%
+  // among players with 150+ threes). Those are the better shooters, so the prior sits 2 points lower; the
+  // fit only sees players who shoot, so below 75% FT it falls off more steeply. A small discount covers an
+  // untested shot; real attempts take over as the sample grows.
+  const untested = 0.025 * (1 - Math.min(1, per36(raw.fg3a) / 3));
+  const touch = ftPct >= 0.75 ? 0.204 + 0.175 * ftPct : 0.335 - 0.45 * (0.75 - ftPct);
+  const tpPrior = touch - untested;
   const tpPct = (raw.fg3 * raw.g + tpPrior * 60) / (fg3aTot + 60);
-  const insPct = (raw.fg2 * raw.g + 0.47 * 80) / (fg2aTot + 80);
-  const ftPct = (raw.ft * raw.g + 0.72 * 30) / (ftaTot + 30);
   const fga = Math.max(raw.fga, 0.01);
+
+  // Passing: AST% climbs ~0.8 per point of usage because the ball is in his hands more. Rate it at a
+  // standard role (usage 20), counting half of that effect so primary creators keep some credit.
+  const usgObs = shrink(raw.usg, 16, minutes, 300);
+  const astObs = shrink(raw.astP, pp.pas, minutes, 300);
+  const astAbility = Math.max(1, astObs + clamp(0.4 * (20 - usgObs), -8, 8));
+  // Ball security: TOV% falls with usage (shots fill the denominator) and rises with playmaking duty
+  // (TOV% ≈ 14.3 − 0.27·USG + 0.23·AST%). Again half the effect, measured at usage 20 / AST% 15.
+  const tovObs = shrink(raw.tovP, pp.tov, minutes, 300);
+  const tovAbility = Math.max(3, tovObs + 0.13 * (usgObs - 20) - 0.11 * (astObs - 15));
+  // Stamina: minutes per game is mostly the coach's choice. Move bench players most of the way toward
+  // a typical starter's workload for their age (75th percentile ≈ 31 mpg until the early 30s).
+  const mpg = Math.max(raw.mp, 12);
+  const workload = raw.age < 33 ? 31 : raw.age < 36 ? 29.5 : 28;
+  const staMin = mpg + 0.6 * Math.max(0, workload - mpg) + (raw.age < 30 ? 2 : raw.age > 33 ? -2 : 0);
 
   const ratings: Ratings = {
     ins: ratingFrom('ins', insPct),
     tp: ratingFrom('tp', tpPct),
     ft: ratingFrom('ft', ftPct),
-    drw: ratingFrom('drw', shrink(raw.fta / fga, 0.25, minutes, 300)),
-    pas: ratingFrom('pas', shrink(raw.astP, 9, minutes, 300)),
-    hnd: ratingFrom('hnd', shrink(raw.tovP, 14, minutes, 300)),
+    drw: ratingFrom('drw', shrink(raw.fta / fga, pp.drw, minutes, 300)),
+    pas: ratingFrom('pas', astAbility),
+    hnd: ratingFrom('hnd', tovAbility),
     oiq: ratingFrom('oiq', shrink(raw.obpm, -2, minutes, 500)),
-    orb: ratingFrom('orb', shrink(raw.orbP, 4, minutes, 300)),
-    drb: ratingFrom('drb', shrink(raw.drbP, 13, minutes, 300)),
-    stl: ratingFrom('stl', shrink(raw.stlP, 1.3, minutes, 300)),
-    blk: ratingFrom('blk', shrink(raw.blkP, 1.2, minutes, 300)),
+    orb: ratingFrom('orb', shrink(raw.orbP, pp.orb, minutes, 300)),
+    drb: ratingFrom('drb', shrink(raw.drbP, pp.drb, minutes, 300)),
+    stl: ratingFrom('stl', shrink(raw.stlP, pp.stl, minutes, 300)),
+    blk: ratingFrom('blk', shrink(raw.blkP, pp.blk, minutes, 300)),
     def: ratingFrom('def', shrink(raw.dbpm, -0.8, minutes, 500)),
-    usg: ratingFrom('usg', shrink(raw.usg, 16, minutes, 300)),
-    sta: ratingFrom('sta', Math.max(raw.mp, 12) + (raw.age < 30 ? 2 : raw.age > 33 ? -2 : 0)),
+    usg: ratingFrom('usg', usgObs),
+    sta: ratingFrom('sta', staMin),
+  };
+  // How his real role differed from his ability (measured after rounding, so the sim reproduces it).
+  const roleOf = (k: RatingKey, real: number) => clamp(real / statFrom(k, ratings[k]), 0.4, 2.5);
+  const role: Partial<Record<RatingKey, number>> = {
+    pas: roleOf('pas', Math.max(1, astObs)),
+    hnd: roleOf('hnd', Math.max(3, tovObs)),
+    sta: roleOf('sta', mpg + (raw.age < 30 ? 2 : raw.age > 33 ? -2 : 0)),
   };
 
   const personality = personalityFor(raw.id, raw);
@@ -125,6 +178,7 @@ export function playerFromRaw(raw: RawPlayer, season: number): Player {
     ratings,
     pot: potential(now, raw.age, personality.work),
     personality,
+    role,
     tend: {
       t3: clamp((fg3aTot + 0.3 * 20) / (raw.fga * raw.g + 20), 0, 0.9),
       ftr: raw.fta / fga,
@@ -148,11 +202,12 @@ export function playerFromRaw(raw: RawPlayer, season: number): Player {
 }
 
 // Simple age curve: young players improve, peak ~27, decline after ~31.
-export function progress(p: Player): string | null {
+// `seasonBoost` comes from the season he just had (playing time, morale, form; see development.ts).
+export function progress(p: Player, seasonBoost = 0): string | null {
   const age = p.age;
   const workBoost = (p.personality.work - 50) / 50; // -1..1
   let base = age <= 21 ? 4 : age <= 23 ? 3 : age <= 25 ? 1.8 : age <= 27 ? 0.6 : age <= 29 ? -0.3 : age <= 31 ? -1.2 : age <= 33 ? -2.4 : -3.8;
-  base += workBoost * (age <= 27 ? 1.8 : 1.0);
+  base += workBoost * (age <= 27 ? 1.8 : 1.0) + seasonBoost;
   const before = ovr(p.ratings);
   const leap = gauss(0, 1.6);
   for (const k of RATING_KEYS) {

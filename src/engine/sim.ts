@@ -1,4 +1,4 @@
-import type { BoxLine, BoxTeam, DefenseSystem, Focus, OffenseSystem, Player, Team } from '../types';
+import type { BoxLine, BoxTeam, DefenseSystem, Focus, OffenseSystem, Player, RatingKey, Team } from '../types';
 import { statFrom } from './ratings';
 import { chance, pickWeighted, random } from './random';
 
@@ -75,9 +75,10 @@ export function shotProfile(p: Player, focus: Focus | undefined = p.focus): Shot
   const share = {} as ZoneMap;
   for (const z of ZONES) {
     share[z] = w[z] / tot;
-    // Forcing shots he isn't used to taking costs efficiency.
+    // Forcing shots he isn't used to taking costs efficiency; players with good touch (FT) adapt better.
     const forced = share[z] / Math.max(0.01, natural[z]);
-    if (forced > 1) pct[z] -= Math.min(0.08, 0.025 * Math.log2(forced));
+    const adapt = clamp(1.4 - r.ft / 100, 0.4, 1.2);
+    if (forced > 1) pct[z] -= Math.min(0.08, 0.025 * Math.log2(forced)) * adapt;
   }
   const ftrNorm = ZONES.reduce((a, z) => a + natural[z] * ZONE_FTR[z], 0);
   return { natural, share, pct, ftrNorm };
@@ -133,15 +134,16 @@ function makeSimPlayer(p: Player, targetMin: number, starter: boolean): SimPlaye
     pft: Math.min(0.97, statFrom('ft', r.ft)),
     ftr: Math.max(0.02, statFrom('drw', r.drw)),
     t3: p.tend.t3,
-    ast: Math.max(1, statFrom('pas', r.pas)),
-    tov: Math.max(3, statFrom('hnd', r.hnd)),
+    ast: Math.max(1, statFrom('pas', r.pas) * roleFactor(p, 'pas', p.focus?.pass)),
+    tov: Math.max(3, statFrom('hnd', r.hnd) * roleFactor(p, 'hnd')),
     orb: Math.max(0.3, statFrom('orb', r.orb)),
     drb: Math.max(3, statFrom('drb', r.drb)),
     stl: Math.max(0.2, statFrom('stl', r.stl)),
     blk: Math.max(0.05, statFrom('blk', r.blk)),
     dbpm: statFrom('def', r.def),
     usg: Math.max(6, statFrom('usg', r.usg)),
-    staMin: Math.max(10, statFrom('sta', r.sta)),
+    // He tires like he did in his real role, unless he's given more minutes: then his full stamina shows.
+    staMin: Math.max(10, clamp(targetMin + 4, statFrom('sta', r.sta) * roleFactor(p, 'sta'), statFrom('sta', r.sta))),
     prof: shotProfile(p),
     shootMul: Math.sqrt(focusMul(p.focus?.shoot)) / Math.pow(focusMul(p.focus?.pass), 0.35),
     passMul: focusMul(p.focus?.pass),
@@ -149,6 +151,13 @@ function makeSimPlayer(p: Player, targetMin: number, starter: boolean): SimPlaye
     tovMul: 1 + clamp(p.focus?.pass ?? 0, 0, 2) * 0.05,
     fatigueMul: 1 + clamp(p.focus?.crash ?? 0, 0, 2) * 0.05,
   };
+}
+
+// The gap between his real role and his ability. Asking him to do more of it (a positive focus level)
+// closes a gap that held him back: at "Max" he plays to his full rating.
+export function roleFactor(p: Player, k: RatingKey, focusLevel = 0): number {
+  const f = p.role?.[k] ?? 1;
+  return f < 1 ? Math.pow(f, 1 - clamp(focusLevel, 0, 2) / 2) : f;
 }
 
 const pickOne = <T,>(xs: T[]): T => xs[Math.floor(random() * xs.length)];
@@ -379,7 +388,9 @@ export function simulateGame(
       if (x === off.closer && (os === 'heliocentric' || clutch)) w *= clutch ? 2.5 : 1.8;
       return w * x.shootMul * (0.7 + 0.3 * x.energy);
     });
-    const perf = (0.93 + 0.07 * shooter.energy) + ((shooter.p.morale - 60) / 40) * 0.008 + off.chemMod;
+    // Fatigue, morale, confidence (form), rust and chemistry.
+    const perf = (0.93 + 0.07 * shooter.energy) + ((shooter.p.morale - 60) / 40) * 0.012
+      + (shooter.p.form ?? 0) * 0.015 - (shooter.p.rust ?? 0) * 0.035 + off.chemMod;
     const clutchAdd = clutch ? ((shooter.p.personality.clutch - 50) / 50) * 0.035 : 0;
 
     // Rare technical fouls for hot-headed players.
@@ -397,7 +408,7 @@ export function simulateGame(
     }
 
     // Turnover
-    const tovP = (shooter.tov / 100) * tovMul * shooter.tovMul * (1 + (stlSum - 8) / 16) * (1.15 - 0.15 * shooter.energy);
+    const tovP = (shooter.tov / 100) * tovMul * shooter.tovMul * (1 + (shooter.p.rust ?? 0) * 0.25) * (1 + (stlSum - 8) / 16) * (1.15 - 0.15 * shooter.energy);
     if (chance(tovP)) {
       shooter.line.tov++;
       if (chance(Math.min(0.85, stlSum / 100 / 0.135))) {

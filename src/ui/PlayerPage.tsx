@@ -3,9 +3,9 @@ import { PERSONALITY_LABELS, RATING_LABELS, statFrom } from '../engine/ratings';
 import { seasonLabel } from '../data/teams';
 import { signPlayer, ROSTER_MAX, updateChemistry } from '../engine/league';
 import { back, changed, go, useLeague } from '../store';
-import { PERSONALITY_KEYS, RATING_KEYS, type SeasonLine } from '../types';
+import { PERSONALITY_KEYS, RATING_KEYS, type Player, type RatingKey, type SeasonLine } from '../types';
 import { OffenseRole } from './OffenseRole';
-import { Bar, Card, f1, Headshot, moraleLabel, Ovr, pct, perGameRow, TeamLink } from './common';
+import { Bar, Card, f1, formLabel, Headshot, moraleLabel, Ovr, pct, perGameRow, TeamLink } from './common';
 
 const RATING_GROUPS: [string, (typeof RATING_KEYS)[number][]][] = [
   ['Scoring', ['ins', 'tp', 'ft', 'drw', 'usg']],
@@ -31,6 +31,7 @@ export function PlayerPage({ id }: { id: string }) {
   const user = league.teams[league.userTeam];
   const isFA = league.freeAgents.includes(id);
   const [ml, mc] = moraleLabel(p.morale);
+  const fl = formLabel(p);
   const team = league.teams[p.stats.team];
 
   return (
@@ -64,6 +65,12 @@ export function PlayerPage({ id }: { id: string }) {
           <div><Ovr p={p} /><small>OVR</small></div>
           <div><span className="ovr pot">{p.pot}</span><small>POT</small></div>
           <div><span style={{ color: mc, fontWeight: 700 }}>{ml}</span><small>Morale</small></div>
+          {fl && <div title={fl[2]}><span style={{ color: fl[1], fontWeight: 700 }}>{fl[0]}</span><small>Form</small></div>}
+          {!!p.seasonDelta && (
+            <div title="OVR change this season from playing time, confidence, morale and injuries">
+              <span style={{ color: p.seasonDelta > 0 ? 'var(--win)' : 'var(--loss)', fontWeight: 700 }}>{p.seasonDelta > 0 ? '▲ +' : '▼ '}{p.seasonDelta}</span><small>This season</small>
+            </div>
+          )}
         </div>
       </div>
 
@@ -72,9 +79,10 @@ export function PlayerPage({ id }: { id: string }) {
           {RATING_GROUPS.map(([g, keys]) => (
             <div key={g} className="rating-group">
               <h4>{g}</h4>
-              {keys.map((k) => <Bar key={k} label={RATING_LABELS[k]} value={p.ratings[k]} hint={ratingHint(k, p.ratings[k])} />)}
+              {keys.map((k) => <Bar key={k} label={RATING_LABELS[k]} value={p.ratings[k]} hint={ratingHint(k, p.ratings[k]) + roleNote(p, k)} />)}
             </div>
           ))}
+          <p className="muted small">Ratings measure ability, not just what his role let him show. Hover a rating for details.</p>
           <div className="tendency muted small">
             Tendencies: {Math.round(p.tend.t3 * 100)}% of shots are threes · Durability {p.dur}
           </div>
@@ -138,6 +146,23 @@ function ratingHint(k: (typeof RATING_KEYS)[number], v: number) {
     case 'blk': return `≈ ${s.toFixed(1)}% block rate`;
     case 'usg': return `≈ ${s.toFixed(1)}% usage rate`;
     case 'sta': return `≈ ${s.toFixed(0)} minutes before fatigue`;
+  }
+}
+
+// Where his real-life role hid or inflated a skill, say what he showed in that role.
+function roleNote(p: Player, k: RatingKey): string {
+  const f = p.role?.[k];
+  if (!f || Math.abs(f - 1) < 0.08) return '';
+  const real = statFrom(k, p.ratings[k]) * f;
+  switch (k) {
+    case 'pas': return f < 1
+      ? ` · In his real role he assisted on only ${real.toFixed(1)}%. Raise his Playmaking role to use his full passing.`
+      : ` · Ball-dominant role pushed his real assist rate to ${real.toFixed(1)}%.`;
+    case 'hnd': return f > 1
+      ? ` · Heavy ball-handling duty meant ${real.toFixed(1)} turnovers per 100 plays in his real role.`
+      : ` · Light ball-handling duty kept his real turnovers at ${real.toFixed(1)} per 100 plays.`;
+    case 'sta': return f < 1 ? ` · Only played ~${Math.round(real)} min in his real role, but can handle more if you give him minutes.` : '';
+    default: return '';
   }
 }
 
